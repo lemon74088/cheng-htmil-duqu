@@ -11,13 +11,12 @@
 <main class="wrap">
 <section class="panel"><h2>① 输入资料来源</h2>
 <label for="url">方剂网页网址（用于记录来源）</label><input id="url" type="url" placeholder="https://cloudtcm.com/formula/29510">
-<p class="hint">网页安全限制说明：普通独立 HTML 无法稳定读取所有网站的网页正文（跨域 CORS、反爬或登录限制）。请打开来源网页，将方剂正文复制到下方；再由 Gemini 从你提供的正文提取，不会假装已读取网址。</p>
-<label for="sourceText">网页正文／复制的方剂资料</label><textarea id="sourceText" placeholder="粘贴网页中的方剂名称、出处、组成、功用、主治、方解等内容……"></textarea>
-<label for="apiKey">Gemini API Key（在本机使用，不会上传到本工具以外的服务器）</label><input id="apiKey" type="password" autocomplete="off" placeholder="粘贴你的 Gemini API Key">
-<div class="grid"><div><label for="model">Gemini 模型</label><input id="model" value="gemini-2.5-flash"></div><div><label for="sourceOverride">出处（可留空让 AI 从正文提取）</label><input id="sourceOverride" placeholder="例如：四圣心源"></div></div>
-<div class="buttons"><button id="extract">提取并填入模板</button><button class="secondary" id="clear">清空</button></div><p id="status" class="status" role="status"></p>
+<p class="hint">免 API 版本：先尝试浏览器直接读取网址；若网站阻止跨域读取（CORS）或有反爬限制，请复制网页正文粘贴到下方。此工具不使用 Gemini API，也不会绕过网站访问限制。</p>
+<label for="sourceText">网页正文／复制的方剂资料</label><textarea id="sourceText" placeholder="可先输入网址尝试读取；若失败，再粘贴网页中的方剂名称、出处、组成、功用、主治、方解等内容……"></textarea>
+<div class="grid"><div class="wide"><label for="sourceOverride">出处（可留空，从正文尝试提取）</label><input id="sourceOverride" placeholder="例如：四圣心源"></div></div>
+<div class="buttons"><button id="extract">读取网址／解析正文</button><button class="secondary" id="clear">清空</button></div><p id="status" class="status" role="status"></p>
 </section>
-<section class="panel"><h2>② 检查与修正字段 <span class="tag">固定顺序／18 项</span></h2><p class="hint">请检查方剂名称与出处。第一项会自动生成原样本使用的 HTML 链接格式；没有来源依据的内容留空，不凭空补写。</p><div id="fields" class="grid"></div>
+<section class="panel"><h2>② 检查与修正字段 <span class="tag">固定顺序／18 项</span></h2><p class="hint">请检查方剂名称与出处。第一项会自动生成原样本使用的 HTML 链接格式；本工具不调用 API，识别不到的内容请手动核对。</p><div id="fields" class="grid"></div>
 <div class="buttons"><button class="blue" id="download">下载 .plist</button><button class="secondary" id="copyXml">复制 XML</button></div><p id="filename" class="small"></p>
 </section>
 <section class="panel"><h2>③ 导出预览</h2><pre id="preview" class="preview"></pre></section>
@@ -35,7 +34,58 @@ function finalValues(){const v={...data};const name=cleanName(v['方剂']);const
 function plist(){const arr=finalValues().map(s=>'\t<string>'+xmlEscape(s).replace(/\n/g,'&#10;')+'</string>').join('\n');return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<array>\n'+arr+'\n</array>\n</plist>\n'}
 function renderPreview(){$('preview').textContent=plist();const n=cleanName(data['方剂'])||'方剂名称';const s=cleanName($('sourceOverride').value);$('filename').textContent='档案名称：SCMedForm_'+n+(s?'（'+s+'）':'')+'.plist';}
 function setFields(obj){schema.forEach(([k])=>{if(obj[k]!==undefined&&obj[k]!==null){data[k]=String(obj[k]);$('f_'+k).value=data[k]}});if(obj['出处'])$('sourceOverride').value=String(obj['出处']);renderPreview()}
-$('extract').addEventListener('click',async()=>{const key=$('apiKey').value.trim(),body=$('sourceText').value.trim(),model=$('model').value.trim()||'gemini-2.5-flash';if(!key){$('status').textContent='请先填入 Gemini API Key。';return}if(body.length<30){$('status').textContent='请先复制并粘贴来源网页的方剂正文（至少 30 个字符）。仅输入网址无法保证读取网页内容。';return}$('extract').disabled=true;$('status').textContent='正在提取，请稍候……';try{const prompt=`你是中医方剂资料结构化助手。只根据用户粘贴的网页正文抽取，不得凭常识补齐、不得猜测。输出纯 JSON 对象，不要 Markdown。键名严格使用：方剂（只放方剂名，不含出处）、出处、快码、笔划、类别、功能、组成、组成2、主治、应用、方解、辨证、加减、附註、歌诀、君、臣、佐、使。所有值均为字符串；原文没有的字段给空字符串。组成和组成2每味药使用换行分隔，尽可能保留原文剂量、炮制方法及用法。不要将网站标题、URL编码串当作方剂名称。若正文有多个方剂，提取页面主方。来源网址：${$('url').value||'未提供'}\n用户指定出处（如有）：${$('sourceOverride').value||'未指定'}\n网页正文：\n${body}`;const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.1,responseMimeType:'application/json'}})});const json=await res.json();if(!res.ok)throw new Error(json.error?.message||'Gemini API 请求失败');const text=json.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';const parsed=JSON.parse(text.replace(/^```json\s*/i,'').replace(/```$/,'').trim());if(!parsed['方剂'])throw new Error('提取结果缺少方剂名称，请检查粘贴的正文。');setFields(parsed);$('status').textContent='提取完成。请核对名称、出处和所有药物剂量后再下载。'}catch(e){$('status').textContent='提取失败：'+e.message+'\n请检查 API Key、模型名称、网络连接与粘贴内容。'}finally{$('extract').disabled=false}});
+function setStatus(msg){$('status').textContent=msg}
+function inferSource(text){
+ const patterns=[/(?:出处|出自|来源|方出)[:：\s]*《?([^《》\n，。；;]{2,30})》?/,/《([^》]{2,30})》/];
+ for(const re of patterns){const m=text.match(re);if(m)return m[1].trim()}return '';
+}
+function parsePlainText(text){
+ const t=text.replace(/\r/g,'\n').replace(/[\t　]+/g,' ').replace(/\n{3,}/g,'\n\n');
+ const rules=[
+  ['方剂',/(?:方名|方剂名称|方剂名)[:：]\s*([^\n。；;]+)/],
+  ['功能',/(?:功效|功用|功能|作用)[:：]\s*([^\n]+)/],
+  ['组成',/(?:组成|处方|药物组成|方药组成)[:：]\s*([\s\S]*?)(?=\n\s*(?:用法|用量|功效|功用|功能|主治|应用|方解|出处|来源|加减|歌诀)[:：]|$)/],
+  ['主治',/(?:主治|主治证候)[:：]\s*([^\n]+)/],
+  ['应用',/(?:临床应用|应用)[:：]\s*([\s\S]*?)(?=\n\s*(?:方解|辨证|加减|附注|附註|歌诀)[:：]|$)/],
+  ['方解',/(?:方解|配伍意义)[:：]\s*([\s\S]*?)(?=\n\s*(?:辨证|加减|附注|附註|歌诀)[:：]|$)/],
+  ['辨证',/(?:辨证|辨证要点)[:：]\s*([^\n]+)/],
+  ['加减',/(?:加减|加减变化)[:：]\s*([\s\S]*?)(?=\n\s*(?:附注|附註|歌诀)[:：]|$)/],
+  ['附註',/(?:附注|附註|出处|来源)[:：]\s*([^\n]+)/],
+  ['歌诀',/(?:歌诀|方歌)[:：]\s*([^\n]+)/]
+ ];
+ const out={};
+ for(const [key,re] of rules){const m=t.match(re);if(m)out[key]=m[1].trim().replace(/\n+/g,'\n')}
+ if(!out['方剂']){
+   const title=(t.split('\n').map(x=>x.trim()).find(x=>x && x.length<36 && !/百度百科|首页|登录|注册|目录|搜索/.test(x))||'');
+   if(title)out['方剂']=title.replace(/\s*[-—|｜].*$/,'').replace(/（.*?）|\(.*?\)/g,'').trim();
+ }
+ if(!out['出处'])out['出处']=inferSource(t);
+ if(out['组成'])out['组成']=out['组成'].split(/\n|[；;]/).map(x=>x.trim()).filter(Boolean).join('\n');
+ return out;
+}
+$('extract').addEventListener('click',async()=>{
+ const url=$('url').value.trim();let body=$('sourceText').value.trim();
+ if(url && !body){
+  $('extract').disabled=true;setStatus('正在尝试直接读取网址……');
+  try{
+   const res=await fetch(url,{method:'GET'});if(!res.ok)throw new Error('网站返回 HTTP '+res.status);
+   const html=await res.text();const doc=new DOMParser().parseFromString(html,'text/html');
+   doc.querySelectorAll('script,style,nav,footer,header,aside,noscript').forEach(e=>e.remove());
+   body=(doc.querySelector('main,article,[role="main"]')||doc.body).innerText.trim();
+   if(!body)throw new Error('页面没有可读取正文');$('sourceText').value=body;
+  }catch(e){setStatus('浏览器无法直接读取这个网址（常见原因是跨域 CORS 或网站限制）。\n不需要 API：请打开来源网页，复制方剂正文，粘贴到上方正文框，再点一次「读取网址／解析正文」。');$('extract').disabled=false;return}
+  finally{$('extract').disabled=false}
+ }
+ if(!body){setStatus('请先输入网址，或将网页正文粘贴到正文框。');return}
+ const result=parsePlainText(body);
+ if(!$('sourceOverride').value.trim() && result['出处'])$('sourceOverride').value=result['出处'];
+ if(url){result['附註']=(result['附註']?result['附註']+'；':'')+'来源网址：'+url}
+ if(!$('sourceOverride').value.trim() && !result['出处'])setStatus('已解析正文，但没有识别到明确出处；请手动填写出处并检查字段。');
+ const count=Object.keys(result).filter(k=>schema.some(([name])=>name===k)).length;
+ if(count===0){setStatus('没有识别到标准字段。请确认粘贴的是方剂正文，而不是只有导航或网页简介。');return}
+ setFields(result);
+ setStatus('已用本机规则解析 '+count+' 项字段，没有调用 API。请逐项核对；网页格式不同可能需要手动调整。');
+});
 $('download').addEventListener('click',()=>{if(!cleanName(data['方剂'])){$('status').textContent='请先填写方剂名称。';return}const blob=new Blob([plist()],{type:'application/xml;charset=utf-8'});const a=document.createElement('a');const name=cleanName(data['方剂']),source=cleanName($('sourceOverride').value);a.href=URL.createObjectURL(blob);a.download='SCMedForm_'+name+(source?'（'+source+'）':'')+'.plist';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);$('status').textContent='已生成下载文件。若导入 App 后提示框仍显示 %E6…，问题可能在 App 的导入/显示逻辑，而非此文件名本身。'});
 $('copyXml').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(plist());$('status').textContent='XML 已复制。'}catch{$('status').textContent='浏览器不允许直接复制，请从下方预览手动复制。'}});
 $('clear').addEventListener('click',()=>{schema.forEach(([k])=>{data[k]='';$('f_'+k).value=''});$('sourceText').value='';$('url').value='';$('sourceOverride').value='';$('status').textContent='已清空。';renderPreview()});renderPreview();
